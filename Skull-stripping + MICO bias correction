@@ -1,0 +1,124 @@
+%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%% MRI Rat brain image processing : Skull-stripping + bias-field-correction (MICO)+ Registration + histogram matching,
+%%%%%%%%%%%% June 2018, Alaleh
+
+
+clc;close all;clear all;
+iterNum = 10;
+N_region=3;  q=1;
+
+%%%%%%%%%%%% Reading Images
+dt_images = dir('C:\Users\alaleh\OneDrive - Kansas State University\DWI proceessing\rat 39\new results\2_Original dti Dicom images\*.dcm'); %reading the phase image
+[aa b] = size(dt_images);
+base_images = [];
+Sk_strp_img = [];
+bc_images=[];
+bias_fields =[];
+bc_rg_imges= [];
+
+for i = 1:aa
+ 
+    filename = strcat('C:\Users\alaleh\OneDrive - Kansas State University\DWI proceessing\rat 39\new results\2_Original dti Dicom images\',dt_images(i).name);
+    info = dicominfo(filename);
+    image= dicomread(info); 
+    image = double(uint8(255 * mat2gray(image)));
+%     image= imrotate(image,180);
+    base_images(i,:,:) = image;
+   
+end
+
+%%%%%%%%%%%% Skull-stripping
+for i =1:aa
+    Image = squeeze(base_images(i,:,:));
+    [BW,maskedImage] = segmentImage_39(Image);
+    Sk_strp_img(i,:,:)= maskedImage;
+    mask(i,:,:) = BW;
+end
+
+% for i =1:aa
+%     Img = squeeze(Sk_strp_img(i,:,:));
+%     figure;
+%     imshow(Img,[])
+% end
+
+% % Img = squeeze(Sk_strp_img(15,:,:));
+% % Img_mask = squeeze(mask(15,:,:));
+% % figure;
+% % subplot(131),imshow(uint8(Image),[]),title('Original image');
+% % subplot(132),imshow(Img_mask,[]),title('MASK')
+% % subplot(133),imshow(uint8(Img),[]),title('Skull-stripped Image')
+
+%%%%%%%%%%%%% MICO Bias field Correction
+for i = 1 :aa
+    A=255;
+    Img = squeeze(Sk_strp_img(i,:,:));
+    ROI = squeeze(mask(i,:,:));
+    [nrow,ncol] = size(Img);n = nrow*ncol;
+
+    Bas=getBasisOrder3(nrow,ncol);
+    N_bas=size(Bas,3);
+    for ii=1:N_bas
+        ImgG{ii} = Img.*Bas(:,:,ii).*ROI;
+        for jj=ii:N_bas
+            GGT{ii,jj} = Bas(:,:,ii).*Bas(:,:,jj).*ROI;
+            GGT{jj,ii} = GGT{ii,jj} ;
+        end
+    end
+    img_bc=[];
+
+    energy_MICO = zeros(3,iterNum);
+    b=ones(size(Img));
+    for ini_num = 1:1
+        C=rand(3,1);
+        C=C*A;
+        M=rand(nrow,ncol,3);
+        a=sum(M,3);
+        for k = 1 : N_region
+            M(:,:,k)=M(:,:,k)./a;
+        end
+
+        [e_max,N_max] = max(M,[], 3);
+        for kk=1:size(M,3)
+            M(:,:,kk) = (N_max == kk);
+        end
+
+        M_old = M; chg=10000;
+        energy_MICO(ini_num,1) = get_energy(Img,b,C,M,ROI,q);
+
+
+        for n = 2:iterNum
+            pause(0.1)
+            [M, b, C]=  MICO(Img,q,ROI,M,C,b,Bas,GGT,ImgG,1, 1);
+            energy_MICO(ini_num,n) = get_energy(Img,b,C,M,ROI,q);
+
+    %         figure(2),
+            if(mod(n,1) == 0)
+                PC=zeros(size(Img));
+                for k = 1 : N_region
+                    PC=PC+C(k)*M(:,:,k);
+                end
+                img_bc = Img./b;  % bias field corrected image
+            end
+        end
+    end
+
+    bias_fields (i,:,:) = b;
+    bc_images (i,:,:) = img_bc;
+    aaa=img_bc.*ROI;
+    aaa= imrotate(aaa,180);
+   X_uint8=uint8(aaa);
+   %write out
+
+    dicomwrite(X_uint8,sprintf('BC_39_Img.%d.dcm',i),info)
+end
+% 
+    figure;
+    subplot(131),imshow(uint8(Img),[]),title('Original image');
+    subplot(132),imshow(b.*ROI,[]),title('bias field')
+    subplot(133),imshow(uint8(img_bc.*ROI),[]),title('bias corrected')
+
+
+
+
+
+
